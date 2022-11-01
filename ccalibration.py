@@ -3,7 +3,7 @@
 """
 Created on Tue Jun 21 14:21:49 2022
 
-Calibrate all the Holmberg II X-1 images in a directory
+Calibrate all the Holmberg II X-1 images in a pathectory
 @author: canis
 """
 
@@ -30,49 +30,49 @@ from astro.mconstants import *
 
 log = mlogging.getLogger( name='ccalibration', console=True, filename='ccalibration_log.txt')
 
-def generate_master_calibration(dir):
+def generate_master_calibration(path):
     """
     Get master calibration data. If does not exist it generates it using calibration images.
     
     Args: 
-        dir: Path of directory of images for one night.
+        path: Path of pathectory of images for one night.
     Returns: 
         Dictionary containg master calibration data.
     """
-    masters = mphot.master_calibration_files(dir)
+    masters = mphot.master_calibration_files(path)
     if len(masters['mbias']) == 0:
         log.info('Generating master calibration images')
-        mphot.masterbias(dir)
-        mphot.masterdark(dir)
-        mphot.masterflat(dir)
-        masters = mphot.master_calibration_files(dir)
+        mphot.masterbias(path)
+        mphot.masterdark(path)
+        mphot.masterflat(path)
+        masters = mphot.master_calibration_files(path)
     else:
         log.info('Found existing master calibration images')
     return masters
 
-def calibrate_night(dir, format='nc',
-                ftemplate='g??d???.[0-9][0-9][0-9]*', astrometry=False):
+def calibrate_night(path, format='nc',
+                ftemplate='g??d???.[0-9][0-9][0-9]*', astrometry=False, anetcfg=None):
     """
     Calibrate all the science images in the folder assuming calibration files are created.
     Creates master calibration files and then runs calibration on each image.
-        and saves the result to `dir/calibration`.
+        and saves the result to `path/calibration`.
         
     Args:
-        dir: Path of directory of images for one night.
+        path: Path of pathectory of images for one night.
     Returns: 
         Nothing.
     """
-    outdir = dir + '/calibrated'
-    if not os.path.exists(outdir):
-        os.system(f'mkdir {outdir}')
-    elif len(glob.glob(f'{outdir}/*')) > 0:
+    outpath = path + '/calibrated'
+    if not os.path.exists(outpath):
+        os.system(f'mkdir {outpath}')
+    elif len(glob.glob(f'{outpath}/*')) > 0:
         log.info('Night is already calibrated')
         return
         
-    fnames = mutils.fixpath(dir)
+    fnames = mutils.fixpath(path)
     files = sorted(glob.glob(f'{fnames}/{ftemplate}')) # fstring
     
-    masters = generate_master_calibration(dir)
+    masters = generate_master_calibration(path)
     mbias_data = mphot.get_mbias_data(masters['mbias'])
     mdarks_data = mphot.get_mdarks_data(masters['mdarks'])
     mflats_data = mphot.get_mflats_data(masters['mflats'])
@@ -116,30 +116,34 @@ def calibrate_night(dir, format='nc',
         log.info(f'Calibrating {path}')
         fn = path.split('/')[-1]
         calibrated = mphot.calibrate_image(ident=path, biasdata=mbias_data, darksdata = mdarks_data, flatsdata=mflats_data)
-        fout = f'{outdir}/{fn}.c.{format}'
-        calibrated.save(fname=fout)
+        fout = f'{outpath}/{fn}.c.{format}'
+        #calibrated.save(fname=fout, format=format)
         if astrometry:
-            calibrate_astrometry(fout)
-            fix_calibration_bug(fout)
-    log.info(f'Done calibrating {dir}')
+            acalibrated = calibrate_astrometry(calibrated, anetcfg=anetcfg)
+            calibrated.hdr = acalibrated.hdr
+            fout = f'{outpath}/{fn}.a.{format}'
+        calibrated.data -= 32768
+        calibrated.save(fname=fout, format=format)
+    log.info(f'Done calibrating {path}')
 
-def calibrate_year(scope, year, astrometry=False):
+def calibrate_year(path, astrometry=False):
     """
     Calibrate all the nights in a year using calibrate_night.
     
     Args: 
-        yeardir: Path of directory of images for one year.
+        yearpath: Path of pathectory of images for one year.
     Returns: 
         Nothing.
     """
-    nights = sorted(glob.glob(f'{images_dir[scope]}/{year}/???/'))
+    nights = sorted(glob.glob(f'{path}/???/'))
     for night in nights:
         log.info(f'Calibrating {night}')
         calibrate_night(night, astrometry=astrometry)
-    log.info(f'Done calibrating {scope, year}')
+    log.info(f'Done calibrating {path}')
     
     
-def calibrate_astrometry(path, verbose=False):
+def calibrate_astrometry(input, outpath=None, anetcfg=None, verbose=False):
+    #FIXME anetcfg
     """
     Recalibrate a calibrated file with astrometry
     
@@ -148,41 +152,46 @@ def calibrate_astrometry(path, verbose=False):
     Returns: 
         Nothing.
     """
-    log.info(f'Astrometry {path.split("/")[-1]}')
-    calibrated = mphot.calibrate_image(ident=path, flags='a',
-                                       anetdir='/opt/nofs/astrometry/bin',
-                                       anetcfg='/opt/nofs/astrometry/etc/astrometry.cfg',
+    print(type(input))
+    if isinstance(input, str):
+        log.info(f'Astrometry {input.split("/")[-1]}')
+    acalibrated = mphot.calibrate_image(ident=input, flags='a',
+                                       anetdir='/usr/local/cellar/astrometry-net/0.91/bin',
+                                       anetcfg=anetcfg, # '/opt/nofs/astrometry/etc/astrometry.cfg'
                                        sigmalimit=False, verbose=verbose)
-    if np.ndim(calibrated.data) > 2:
-        calibrated.data = calibrated.data[0]
-    calibrated.save(f'{path[:-5]}.a.nc') # no .c.nc at the end so that it doesn't get picked up as calibration or aligned file. change later
+    if np.ndim(acalibrated.data) > 2:
+        acalibrated.data = acalibrated.data[0]
+    if outpath is None:
+        return acalibrated
+    else:
+        acalibrated.save(outpath)
     
 def calibrate_year_astrometry(scope, year):
     """
     Recalibrate all calibrated files with astrometry
     
     Args: 
-        yeardir: Path of directory of images for one year.
+        yearpath: Path of pathectory of images for one year.
     Returns: 
         Nothing.
     """
-    files = sorted(glob.glob(f'{images_dir[scope]}/{year}/???/calibrated/{calibrated_image_templ}'))
+    files = sorted(glob.glob(f'{images_path[scope]}/{year}/???/calibrated/{calibrated_image_templ}'))
     log.info(f'Found {len(files)} calibrated images')
     for fn in files:
         name = fn.split('/')[-1]
         log.info(f'{name}')
 
-        if len(glob.glob(f'{images_dir[scope]}/{year}/???/calibrated/{name[:-4]}a.nc')) > 0:
+        if len(glob.glob(f'{images_path[scope]}/{year}/???/calibrated/{name[:-4]}a.nc')) > 0:
             log.info('skipping')
             continue
         calibrate_astrometry(fn)
 
     log.info('Done')
     
-def remove_bad_astrometry(fdir):
-    #files = sorted(glob.glob(f'{images_dir[scope]}/{year}/???/calibrated/{astrometry_image_templ}', recursive=True))
-    files = sorted(glob.glob(f'{fdir}/**/*.a.nc', recursive=True))
-    #outdir = f'{images_dir[scope]}/{year}/bad_astrometry/'
+def remove_bad_astrometry(fpath):
+    #files = sorted(glob.glob(f'{images_path[scope]}/{year}/???/calibrated/{astrometry_image_templ}', recursive=True))
+    files = sorted(glob.glob(f'{fpath}/**/*.a.nc', recursive=True))
+    #outpath = f'{images_path[scope]}/{year}/bad_astrometry/'
     log.info(f'Found {len(files)} calibrated images with astrometry')
     bad_files = []
     for fn in files:
@@ -210,8 +219,8 @@ def fix_calibration_bug(fn):
 #     image.data -= 32768
 #     image.save(fn)
 # 
-# def subtract_32768(dir):
-#     files = sorted(glob.glob(f'{dir}/**/{astrometry_image_templ}', recursive=True))
+# def subtract_32768(path):
+#     files = sorted(glob.glob(f'{path}/**/{astrometry_image_templ}', recursive=True))
 #     log.info(f'Found {len(files)} calibrated images with astrometry')
 #     count = 0
 #     for fn in files:
@@ -237,11 +246,11 @@ def fix_calibration_bug(fn):
 #     I updated calibrate_night so that this function shouldn't be needed.
     
 #     Args: 
-#         yeardir: Path of directory of images for one year.
+#         yearpath: Path of pathectory of images for one year.
 #     Returns: 
 #         Nothing.
 #     """
-#     nights = sorted(glob.glob(f'{images_dir[scope]}/{year}/???/'))
+#     nights = sorted(glob.glob(f'{images_path[scope]}/{year}/???/'))
 #     for night in nights:
 #         log.info(f'Moving non holmberg images for {night}')
 #         non_holmberg = []
@@ -260,10 +269,10 @@ def fix_calibration_bug(fn):
 #                 log.info(f'{name} is not Holmberg II X-1 in {fn}')
 #                 non_holmberg.append(fn)
 #         if len(non_holmberg) is not 0:
-#             outdir = f'{night}calibrated/nonholmberg/'
-#             if not os.path.exists(outdir):
-#                 os.system(f'mkdir {outdir}')
+#             outpath = f'{night}calibrated/nonholmberg/'
+#             if not os.path.exists(outpath):
+#                 os.system(f'mkdir {outpath}')
 #             for fn in non_holmberg:
-#                 os.system('mv {fn} {outdir}')              
+#                 os.system('mv {fn} {outpath}')              
 #     log.info(f'Done moving all non Holmberg images for {scope, year}')
 # =============================================================================
