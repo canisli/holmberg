@@ -32,13 +32,10 @@ from utils import mlogging
 
 from icecream import ic
 
-from ccalibration import calibrate_astrometry
-from cconstants import calibrated_image_templ, astrometry_image_templ, images_dir, data_dir
-
-
+astrometry_image_templ = '*.a.*'
 log = mlogging.getLogger(name='cseeing', console=True, filename='cseeing_log.txt')
 
-def get_avg_fwhm_image(image, quick=False):
+def calc_seeing_image(image, quick=False, verbose=False):
     """
     Retrieves average seeing in arcseconds calculated from centroid finding algorithm mimage.Image.stars()
 
@@ -47,13 +44,16 @@ def get_avg_fwhm_image(image, quick=False):
     Returns: 
         Tuple (Seeing in arcseconds as a float, number of stars)
     """
-    stars_data = image.stars(frame=1, snr=500, nstd=3.0, fraction=0.05, nfwhmsdev=1.4, diskradius=4,
+    if isinstance(image, str):
+        image = mimage.Image(image)
+    stars_data = image.stars(frame=1, snr=10, nstd=3.0, fraction=0.05, nfwhmsdev=1.8,
+               diskradius=4,
                autoradius='auto fwhm', Nthresh=1.8, bufferannulus=7, skyannulus=10,
-               halfwidth=1.5, emax=0.4, fwhmpixmin=0.1, fwhmpixmax=30, fit2d='moffat',
+               halfwidth=1.5, emax=0.4, fwhmpixmin=1.5, fwhmpixmax=15, fit2d='moffat',
                partialpixels=True, quick=quick, detection_x=None, detection_y=None,
-               detection_r1=None, detection_r2=None, verbose=False, maxcpus=None,
+               detection_r1=None, detection_r2=None, verbose=verbose, maxcpus=None,
                timeout=None, tmax=300, Nmax=None )
-    
+
     hdr, data = mimage.image2datadict(image)
     
     pixscale = np.nan
@@ -73,12 +73,12 @@ def get_avg_fwhm_image(image, quick=False):
     
     return (fwmean_arc, num_stars)
 
-def get_avg_fwhm_night(night_dir, quick=False, save=True, overwrite=False):
+def calc_seeing_night(path, outpath=None,
+    quick=False, overwrite=False):
     """
     Retrieve average seeing in arcsecond for each image in a night. Option to save results to seeings.csv
 
-    Args: night_dir : Path of directory of calibrated images for one night
-           save : Boolean for whether to write results to csv file 
+    Args: path : Path of directory of calibrated images for one night
            overwrite : Boolean for whether to ignore existing csv file and recalculate seeings
     Returns: 
         Astropy Table of image names and seeings
@@ -87,12 +87,12 @@ def get_avg_fwhm_night(night_dir, quick=False, save=True, overwrite=False):
     ext = "_quick" if quick else ""
     bad_files = []
     if not overwrite:
-        seeing_file = glob.glob(night_dir + f'/seeings{ext}.ascii')
+        seeing_file = glob.glob(path + f'/seeings{ext}.ascii')
         if len(seeing_file) > 0:
             log.info(f'Night already has seeings{ext}.ascii. Fetching ascii file')
             return (Table.read(seeing_file[0], format='ascii.fixed_width_two_line'), 
                     bad_files)
-    files = sorted(glob.glob(f'{night_dir}/{calibrated_image_templ}'))
+    files = sorted(glob.glob(f'{path}/*.a.*'))
     seeings = Table({'Image': [], 'Seeing (arcsec)' : [], 'Num Stars': []}, 
                     dtype=('str', 'float', 'int32'))
     if len(files) == 0:
@@ -104,15 +104,15 @@ def get_avg_fwhm_night(night_dir, quick=False, save=True, overwrite=False):
         image = mimage.Image(fn)
         seeing = -1
         num_stars = -1
-        try:
-            (seeing, num_stars) = get_avg_fwhm_image(image, quick=quick)
-        except Exception:
-            log.error('Uh oh. Skipping')
-            bad_files.append(fn)
+        #try:
+        (seeing, num_stars) = calc_seeing_image(image, quick=quick)
+        # except Exception as e:
+        #     log.error(e)
+        #     bad_files.append(fn)
         seeings.add_row([fn_name, seeing, num_stars])
-    if save and len(seeings) > 0:
-        seeings.write(f'{night_dir}/seeings{ext}.ascii', format='ascii.fixed_width_two_line', overwrite=True)
-        log.info(f'Wrote results to {night_dir}/seeings{ext}.ascii')
+    if outpath is not None:
+        seeings.write(f'{outpath}/seeings{ext}.ascii', format='ascii.fixed_width_two_line', overwrite=True)
+        log.info(f'Wrote results to {path}/seeings{ext}.ascii')
     return (seeings, bad_files)
 
 def get_avg_fwhm_year(scope, year, quick=False, overwrite=False):
@@ -299,10 +299,3 @@ def filter_seeings(scope, years=[2019,2020,2021], max_seeings=[2.0, 2.5, 3.0, 3.
 
 def count_files(fdir, exp=astrometry_image_templ):
     return len(glob.glob(f'{fdir}/{exp}'))
-
-
-        
-    
-
-        
-    

@@ -25,7 +25,6 @@ from utils import mlogging
 
 from icecream import ic
 
-from cconstants import *
 from astro.mconstants import *
 
 log = mlogging.getLogger( name='ccalibration', console=True, filename='ccalibration_log.txt')
@@ -51,7 +50,9 @@ def generate_master_calibration(path):
     return masters
 
 def calibrate_night(path, format='nc',
-                ftemplate='g??d???.[0-9][0-9][0-9]*', astrometry=False, anetcfg=None):
+                ftemplate='g??d???.[0-9][0-9][0-9]*', 
+                astrometry=False, anetcfg=None, 
+                verbose=False, overwrite=False):
     """
     Calibrate all the science images in the folder assuming calibration files are created.
     Creates master calibration files and then runs calibration on each image.
@@ -62,15 +63,18 @@ def calibrate_night(path, format='nc',
     Returns: 
         Nothing.
     """
-    outpath = path + '/calibrated'
+    outpath = f'{path}/calibrated'
+    
+    
     if not os.path.exists(outpath):
         os.system(f'mkdir {outpath}')
     elif len(glob.glob(f'{outpath}/*')) > 0:
-        log.info('Night is already calibrated')
-        return
-        
+        if not overwrite:
+            log.info('Night is already calibrated')
+            return
+
     fnames = mutils.fixpath(path)
-    files = sorted(glob.glob(f'{fnames}/{ftemplate}')) # fstring
+    files = sorted(glob.glob(f'{fnames}/{ftemplate}'))
     
     masters = generate_master_calibration(path)
     mbias_data = mphot.get_mbias_data(masters['mbias'])
@@ -93,7 +97,8 @@ def calibrate_night(path, format='nc',
         expt = expinfo['expt']
         b = expinfo['binning']
         if not "Holmberg II X-1" in name:
-            log.info(name + ' is not Holmberg II X-1 in' + fn)
+            if verbose:
+                log.info(name + ' is not Holmberg II X-1 in' + fn)
             num_skip += 1
             continue
         if 'calibrat' in hdr['obstype'][0].lower():
@@ -152,7 +157,6 @@ def calibrate_astrometry(input, outpath=None, anetcfg=None, verbose=False):
     Returns: 
         Nothing.
     """
-    print(type(input))
     if isinstance(input, str):
         log.info(f'Astrometry {input.split("/")[-1]}')
     acalibrated = mphot.calibrate_image(ident=input, flags='a',
@@ -188,10 +192,9 @@ def calibrate_year_astrometry(scope, year):
 
     log.info('Done')
     
-def remove_bad_astrometry(fpath):
+def remove_bad_astrometry(path):
     #files = sorted(glob.glob(f'{images_path[scope]}/{year}/???/calibrated/{astrometry_image_templ}', recursive=True))
-    files = sorted(glob.glob(f'{fpath}/**/*.a.nc', recursive=True))
-    #outpath = f'{images_path[scope]}/{year}/bad_astrometry/'
+    files = sorted(glob.glob(f'{path}/*a*', recursive=True))
     log.info(f'Found {len(files)} calibrated images with astrometry')
     bad_files = []
     for fn in files:
@@ -202,6 +205,7 @@ def remove_bad_astrometry(fpath):
             log.error(f'{fn} does not have astrometry. Removing')
             os.system(f'rm {fn}')
     log.info(len(bad_files))
+    return bad_files
     
 def fix_calibration_bug(fn):
     img_a = mimage.Image(fn)
